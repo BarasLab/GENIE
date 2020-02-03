@@ -2,7 +2,7 @@
 
 The basic principle is first to simply filter unique variants for which 
 
-- count in a given panel was >= 10
+- counts in a given panel >= 10
 
 - counts aggregated from all other panels is < 10 and there are >= 3 different panels that cover the variant in question
 
