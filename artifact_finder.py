@@ -7,11 +7,11 @@ import matplotlib.pyplot as plt
 import pyranges as pr
 
 
-# columns to load from maf
-cols = ['Hugo_Symbol', 'Chromosome', 'Start_Position', 'End_Position', 'Reference_Allele', 'Tumor_Seq_Allele2', 'Tumor_Sample_Barcode', 't_alt_count', 't_ref_count']
 # load maf
-maf = pd.read_csv('data/data_mutations_extended_7.6-consortium.txt', sep='\t', usecols=cols, low_memory=False)
-# maf = pd.read_csv('data/data_mutations_extended_7.6-consortium.txt', sep='\t', low_memory=False)
+# columns to load from maf
+# cols = ['Hugo_Symbol', 'Chromosome', 'Start_Position', 'End_Position', 'Reference_Allele', 'Tumor_Seq_Allele2', 'Tumor_Sample_Barcode', 't_alt_count', 't_ref_count']
+# maf = pd.read_csv('data/data_mutations_extended_7.6-consortium.txt', sep='\t', usecols=cols, low_memory=False)
+maf = pd.read_csv('data/data_mutations_extended_7.6-consortium.txt', sep='\t', low_memory=False)
 # idx = maf.duplicated(keep=False)
 # t = maf.loc[idx]
 
@@ -27,15 +27,18 @@ maf = pd.merge(maf, sample[['SAMPLE_ID', 'SEQ_ASSAY_ID']], how='left', left_on='
 # make unique variant string
 maf['var_str'] = maf['Chromosome'].astype(str) + '_' + maf['Start_Position'].astype(str) + '_' + maf['End_Position'].astype(str) + '_' + maf['Reference_Allele'].astype(str) + '_' + maf['Tumor_Seq_Allele2'].astype(str)
 
+# TODO: Need to update to reflect GENIE germline filtering approach
+idx_germline = (maf['FILTER'].str.contains('common_variant').fillna(False)) | (maf.iloc[:, -10:-1].max(axis=1, skipna=True) > 0.001)
+
 # counts of mutations across assay ID (nan = not in data)
-variant_counts = maf.groupby(['var_str', 'SEQ_ASSAY_ID', 'Tumor_Sample_Barcode']).size().to_frame().reset_index()
+variant_counts = maf[~idx_germline].groupby(['var_str', 'SEQ_ASSAY_ID', 'Tumor_Sample_Barcode']).size().to_frame().reset_index()
 sample_counts = variant_counts.groupby(['var_str', 'SEQ_ASSAY_ID']).size().to_frame().reset_index().pivot(index='var_str', columns='SEQ_ASSAY_ID', values=0)
 
 # get counts of sample per assay
 panel_counts = sample.groupby('SEQ_ASSAY_ID').size()
 
 # get unique mutations
-var_uniq = maf[['var_str', 'Hugo_Symbol', 'Chromosome', 'Start_Position', 'End_Position', 'Reference_Allele', 'Tumor_Seq_Allele2']].drop_duplicates().set_index('var_str')
+var_uniq = maf.loc[~idx_germline, ['var_str', 'Hugo_Symbol', 'Chromosome', 'Start_Position', 'End_Position', 'Reference_Allele', 'Tumor_Seq_Allele2']].drop_duplicates().set_index('var_str')
 # make PyRange for unique variants, include index (var_str) for setting value in orginal df
 var_pr = pr.PyRanges(var_uniq.reset_index()[['Chromosome', 'Start_Position', 'End_Position', 'var_str']].rename(columns={'Start_Position': 'Start', 'End_Position': 'End'}))
 
@@ -70,3 +73,4 @@ review_table['fisher_p'] = review_table.apply(lambda x: fisher_exact([[x[bed_nam
 review_table = review_table[list(review_table.columns[:6]) + [bed_name] + list(review_table.columns[-6:]) + list(bed_name_other)]
 
 review_table.to_csv(bed_name + '_for_review.tsv', sep='\t', index_label='index')
+
