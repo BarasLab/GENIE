@@ -8,9 +8,12 @@ import pyranges as pr
 
 
 # columns to load from maf
-cols = ['Hugo_Symbol', 'Chromosome', 'Start_Position', 'End_Position', 'Reference_Allele', 'Tumor_Seq_Allele2', 'Tumor_Sample_Barcode']
+cols = ['Hugo_Symbol', 'Chromosome', 'Start_Position', 'End_Position', 'Reference_Allele', 'Tumor_Seq_Allele2', 'Tumor_Sample_Barcode', 't_alt_count', 't_ref_count']
 # load maf
 maf = pd.read_csv('data/data_mutations_extended_7.6-consortium.txt', sep='\t', usecols=cols, low_memory=False)
+# maf = pd.read_csv('data/data_mutations_extended_7.6-consortium.txt', sep='\t', low_memory=False)
+# idx = maf.duplicated(keep=False)
+# t = maf.loc[idx]
 
 # load sample table
 sample = pd.read_csv('data/data_clinical_sample_7.6-consortium.txt', sep='\t', skiprows=4)
@@ -25,10 +28,11 @@ maf = pd.merge(maf, sample[['SAMPLE_ID', 'SEQ_ASSAY_ID']], how='left', left_on='
 maf['var_str'] = maf['Chromosome'].astype(str) + '_' + maf['Start_Position'].astype(str) + '_' + maf['End_Position'].astype(str) + '_' + maf['Reference_Allele'].astype(str) + '_' + maf['Tumor_Seq_Allele2'].astype(str)
 
 # counts of mutations across assay ID (nan = not in data)
-call_counts = maf.groupby(['var_str', 'SEQ_ASSAY_ID']).size().to_frame().reset_index().pivot(index='var_str', columns='SEQ_ASSAY_ID', values=0)
+variant_counts = maf.groupby(['var_str', 'SEQ_ASSAY_ID', 'Tumor_Sample_Barcode']).size().to_frame().reset_index()
+sample_counts = variant_counts.groupby(['var_str', 'SEQ_ASSAY_ID']).size().to_frame().reset_index().pivot(index='var_str', columns='SEQ_ASSAY_ID', values=0)
 
 # get counts of sample per assay
-sample_counts = sample.groupby('SEQ_ASSAY_ID').size()
+panel_counts = sample.groupby('SEQ_ASSAY_ID').size()
 
 # get unique mutations
 var_uniq = maf[['var_str', 'Hugo_Symbol', 'Chromosome', 'Start_Position', 'End_Position', 'Reference_Allele', 'Tumor_Seq_Allele2']].drop_duplicates().set_index('var_str')
@@ -41,13 +45,13 @@ for bed_name in beds.keys():
     var_uniq.loc[var_pr.overlap(pr.PyRanges(chromosomes=beds[bed_name]['Chromosome'], starts=beds[bed_name]['Start_Position'], ends=beds[bed_name]['End_Position'])).var_str, bed_name] = True
 
 # is nan to true zeros based on coverage of panel for specific variant
-call_counts.values[(call_counts.isna() & var_uniq.iloc[:, 6:]).values] = 0
+sample_counts.values[(sample_counts.isna() & var_uniq.iloc[:, 6:]).values] = 0
 
 bed_review_idx = dict()
 # criteria for flagging variants for assay bias
 for bed_name in beds.keys():
     bed_name_other = np.setdiff1d(list(beds.keys()), bed_name)
-    bed_review_idx[bed_name] = np.where((call_counts[bed_name] >= 10) & (call_counts[bed_name_other].sum(axis=1, skipna=True) < 10) & ((~call_counts[bed_name_other].isna()).sum(axis=1) >= 3))[0]
+    bed_review_idx[bed_name] = np.where((sample_counts[bed_name] >= 10) & (sample_counts[bed_name_other].sum(axis=1, skipna=True) < 10) & ((~sample_counts[bed_name_other].isna()).sum(axis=1) >= 3))[0]
 
 bed_name = 'MSK-IMPACT468'
 bed_name = 'JHU-50GP'
@@ -55,5 +59,14 @@ bed_name = 'UHN-555-V1'
 bed_name = 'PHS-FOCUS-V1'
 
 bed_name_other = np.setdiff1d(list(beds.keys()), bed_name)
-p = call_counts.iloc[bed_review_idx[bed_name]].apply(lambda x: pd.Series(fisher_exact([[x[bed_name], sample_counts[bed_name]], [x[bed_name_other].sum(skipna=True), sample_counts[bed_name_other[(~x[bed_name_other].isna())]].sum()]], alternative='greater')[1], index=['p-value']), axis=1)
-review_table = pd.concat([var_uniq.loc[call_counts.index[bed_review_idx[bed_name]]].iloc[:, :6], call_counts[[bed_name] + list(bed_name_other)].iloc[bed_review_idx[bed_name]], p], axis=1).sort_values(by=bed_name, ascending=False)
+p = sample_counts.iloc[bed_review_idx[bed_name]].apply(lambda x: pd.Series(fisher_exact([[x[bed_name], panel_counts[bed_name]], [x[bed_name_other].sum(skipna=True), panel_counts[bed_name_other[(~x[bed_name_other].isna())]].sum()]], alternative='greater')[1], index=['p-value']), axis=1)
+review_table = pd.concat([var_uniq.loc[sample_counts.index[bed_review_idx[bed_name]]].iloc[:, :6], sample_counts.iloc[bed_review_idx[bed_name]]], axis=1).sort_values(by=bed_name, ascending=False)
+review_table['n_' + bed_name] = panel_counts[bed_name]
+review_table['not_' + bed_name] = review_table[bed_name_other].sum(axis=1, skipna=True)
+review_table['n_not_' + bed_name] = (~review_table[bed_name_other].isna()).apply(lambda x: panel_counts[x.index[x].values].sum(), axis=1)
+review_table['freq_' + bed_name] = review_table[bed_name] / review_table['n_' + bed_name]
+review_table['freq_not' + bed_name] = review_table['not_' + bed_name] / review_table['n_not_' + bed_name]
+review_table['fisher_p'] = review_table.apply(lambda x: fisher_exact([[x[bed_name], x['n_' + bed_name] - x[bed_name]], [x['not_' + bed_name], x['n_not_' + bed_name] - x['not_' + bed_name]]], alternative='greater')[1], axis=1)
+review_table = review_table[list(review_table.columns[:6]) + [bed_name] + list(review_table.columns[-6:]) + list(bed_name_other)]
+
+review_table.to_csv(bed_name + '_for_review.tsv', sep='\t', index_label='index')
