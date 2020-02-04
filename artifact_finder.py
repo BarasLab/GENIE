@@ -32,10 +32,8 @@ sample_counts = sample.groupby('SEQ_ASSAY_ID').size()
 
 # get unique mutations
 var_uniq = maf[['var_str', 'Hugo_Symbol', 'Chromosome', 'Start_Position', 'End_Position', 'Reference_Allele', 'Tumor_Seq_Allele2']].drop_duplicates().set_index('var_str')
-# make PyRange for unique variants
-var_pr = pr.PyRanges(chromosomes=var_uniq['Chromosome'], starts=var_uniq['Start_Position'], ends=var_uniq['End_Position'])
-# include the variant unique identifier, which is used to index the df
-var_pr.var_str = var_uniq.index.values
+# make PyRange for unique variants, include index (var_str) for setting value in orginal df
+var_pr = pr.PyRanges(var_uniq.reset_index()[['Chromosome', 'Start_Position', 'End_Position', 'var_str']].rename(columns={'Start_Position': 'Start', 'End_Position': 'End'}))
 
 # find overlap of variants in various bed files and add to unique variant table
 for bed_name in beds.keys():
@@ -59,5 +57,3 @@ bed_name = 'PHS-FOCUS-V1'
 bed_name_other = np.setdiff1d(list(beds.keys()), bed_name)
 p = call_counts.iloc[bed_review_idx[bed_name]].apply(lambda x: pd.Series(fisher_exact([[x[bed_name], sample_counts[bed_name]], [x[bed_name_other].sum(skipna=True), sample_counts[bed_name_other[(~x[bed_name_other].isna())]].sum()]], alternative='greater')[1], index=['p-value']), axis=1)
 review_table = pd.concat([var_uniq.loc[call_counts.index[bed_review_idx[bed_name]]].iloc[:, :6], call_counts[[bed_name] + list(bed_name_other)].iloc[bed_review_idx[bed_name]], p], axis=1).sort_values(by=bed_name, ascending=False)
-
-keys = list(beds.keys())
