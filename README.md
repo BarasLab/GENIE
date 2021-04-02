@@ -1,6 +1,6 @@
 # GENIE
 
-## ArtifactFinder
+## artifact_finder.py
 
 The basic principle is first to simply filter unique variants for which 
 
@@ -19,6 +19,6 @@ I also annotated the resulting set with a fisher p-value for the variants that p
 | Number of variants called in panel | Number of samples for this panel |
 | Number of variants called in other panels with coverage for this variant | Number of samples for panels with coverage for this variant |
 
-## fusion_check
+## genie_fusion_check.py
 
 - catalogues the number of samples with fusions calls in the data_fusion.txt file of a given release and aligns this against what the data_clinical_sample.txt table says in conjunction with the assay_information.txt.
